@@ -1,0 +1,158 @@
+name: Release Maven versions
+
+# Runs ONLY for a release pull request that publish-on-approval.yml merged after a maintainer's
+# approval (it calls this workflow right after the merge). It is never started by a push to main, so
+# a version folder that reaches main another way — a release PR merged by hand, a direct push — gets
+# no tag and no release. Manual run (workflow_dispatch, with the pull request number) is for retries
+# and applies the same rule: the pull request must be merged by github-actions[bot] into main with a
+# merge commit whose second parent is the pull request's head, and every version folder it adds must
+# be identical on main and in that head.
+#
+# The Maven repository is served straight from this repository
+# (raw.githubusercontent.com/<owner>/<repo>/main/maven), so there is nothing to deploy: this workflow
+# re-checks every version folder and maven-metadata.xml and checks that the raw URL serves exactly the
+# bytes in SHA256SUMS. Then, for each version the pull request added:
+#   - new version → tag <version> on the pull request's commit + GitHub Release with the notes from
+#     the pull request's "### Release notes" section (else the folder's RELEASE_NOTES.md);
+#   - backfilled version → served and checked only: no tag, no release.
+# Re-running it is safe: existing releases are skipped.
+#
+# Repository variable PUBLIC_MAVEN_URL = the URL customers use. When it is empty,
+# https://raw.githubusercontent.com/<this repository>/main/maven is used.
+
+on:
+  # No push trigger on purpose: a direct push or merge to main must not create tags or releases.
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: Release pull request merged by publish-on-approval.yml (retry)
+        type: string
+        required: true
+  # Called by publish-on-approval.yml right after it merged the approved pull request (a merge made
+  # with GITHUB_TOKEN does not start other workflows).
+  workflow_call:
+    inputs:
+      pr-number:
+        description: The release pull request that was just merged
+        type: string
+        required: true
+
+concurrency:
+  group: release-maven
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The pull request was approved and merged by the release workflow
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::pr-number '$PR_NUMBER' is not a pull request number."; exit 1; }
+          read -r merged_by merge_sha head_sha base_ref < <(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
+            --jq '"\(.merged_by.login // "-") \(.merge_commit_sha // "-") \(.head.sha) \(.base.ref)"')
+          if [ "$merged_by" = "-" ]; then
+            echo "::error::PR #${PR_NUMBER} is not merged — no tag or release created."; exit 1
+          fi
+          if [ "$merged_by" != "github-actions[bot]" ]; then
+            echo "::error::PR #${PR_NUMBER} was merged by ${merged_by}, not by publish-on-approval.yml after an approval — no tag or release created."; exit 1
+          fi
+          [ "$base_ref" = main ] || { echo "::error::PR #${PR_NUMBER} was merged into ${base_ref}, not main."; exit 1; }
+          git fetch --quiet --no-tags origin "+refs/heads/main:refs/remotes/origin/main" "+refs/pull/${PR_NUMBER}/head:refs/remotes/pr/head"
+          [ "$(git rev-parse refs/remotes/pr/head)" = "$head_sha" ] || { echo "::error::PR #${PR_NUMBER} head does not match."; exit 1; }
+          git merge-base --is-ancestor "$merge_sha" origin/main \
+            || { echo "::error::The merge commit ${merge_sha} of PR #${PR_NUMBER} is not on main."; exit 1; }
+          [ "$(git rev-parse "${merge_sha}^2" 2>/dev/null)" = "$head_sha" ] \
+            || { echo "::error::${merge_sha} is not a merge commit of PR #${PR_NUMBER}'s head — no release created."; exit 1; }
+          # The version folders this pull request added, identical on main and in its head.
+          git diff --name-only --diff-filter=A "${merge_sha}^1" "$merge_sha" -- maven \
+            | sed -n 's#/release\.json$##p' > "$RUNNER_TEMP/new-dirs.txt"
+          [ -s "$RUNNER_TEMP/new-dirs.txt" ] || { echo "::error::PR #${PR_NUMBER} added no version folder."; exit 1; }
+          while read -r dir; do
+            git diff --quiet "$head_sha" origin/main -- "$dir" \
+              || { echo "::error::$dir on main differs from PR #${PR_NUMBER} — no release created."; exit 1; }
+          done < "$RUNNER_TEMP/new-dirs.txt"
+          git checkout --quiet --detach origin/main   # verify and serve-check main as customers see it
+          echo "head=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "PR #${PR_NUMBER}: merge ${merge_sha:0:7}, head ${head_sha:0:7}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify every version folder and maven-metadata.xml
+        run: |
+          set -euo pipefail
+          python3 -I scripts/maven_site.py verify maven
+          python3 -I scripts/maven_site.py check-metadata maven
+
+      - name: Check served files and create missing releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAVEN_URL: ${{ vars.PUBLIC_MAVEN_URL }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head }}
+        run: |
+          set -euo pipefail
+          BASE="${MAVEN_URL:-https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/maven}"; BASE="${BASE%/}"
+          python3 -I scripts/maven_site.py pending maven > "$RUNNER_TEMP/versions.jsonl"
+          failed=0
+          while read -r line; do
+            dir="$(jq -r .dir <<<"$line")";        tag="$(jq -r .tag <<<"$line")"
+            version="$(jq -r .version <<<"$line")"; artifact="$(jq -r .artifactId <<<"$line")"
+            pre="$(jq -r .prerelease <<<"$line")";  backfilled="$(jq -r .backfilled <<<"$line")"
+            grep -qxF "$dir" "$RUNNER_TEMP/new-dirs.txt" || continue   # only this pull request's versions
+            if [ "$backfilled" != "true" ] && gh release view "$tag" >/dev/null 2>&1; then
+              continue   # released by an earlier run
+            fi
+
+            # The URL customers use must serve exactly the bytes in SHA256SUMS — for every version,
+            # backfilled ones included. raw.githubusercontent.com caches for a few minutes.
+            aar="${artifact}-${version}.aar"
+            expected="$(awk -v f="$aar" '$2==f || $2=="*"f {print $1}' "$dir/SHA256SUMS")"
+            url="${BASE}/${dir#maven/}/${aar}"
+            ok=0
+            for i in $(seq 1 20); do
+              if curl -fsSL -o "$RUNNER_TEMP/served.aar" "$url" \
+                 && [ "$(sha256sum "$RUNNER_TEMP/served.aar" | cut -d' ' -f1)" = "$expected" ]; then
+                ok=1; break
+              fi
+              echo "Waiting for $url ($i/20)…"; sleep 30
+            done
+            if [ "$ok" != 1 ]; then
+              echo "::error::$url is not served with SHA-256 $expected after 10 minutes. No release created for $tag."
+              failed=1; continue   # the other versions still get their release; the job fails at the end
+            fi
+            [ "$backfilled" = "true" ] && continue   # backfilled: served and checked, no tag or release
+
+            files=("$dir/$aar" "$dir/${artifact}-${version}.pom" "$dir/SHA256SUMS")
+            for extra in "${artifact}-${version}-sources.jar" "${artifact}-${version}.module"; do
+              [ -f "$dir/$extra" ] && files+=("$dir/$extra")
+            done
+            # Release notes: the '### Release notes' section of the approved pull request (badges for
+            # fix/feature/improvement/update/change), else RELEASE_NOTES.md.
+            gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md" 2>/dev/null \
+              || { echo "::warning::Could not read PR #${PR_NUMBER} — using RELEASE_NOTES.md"; : > "$RUNNER_TEMP/pr-body.md"; }
+            python3 -I scripts/maven_site.py notes "$dir" --pr-body-file "$RUNNER_TEMP/pr-body.md" \
+              --maven-url "$BASE" > "$RUNNER_TEMP/notes.md"
+            # No --latest for stable versions: GitHub then keeps the highest version as Latest, so a
+            # hotfix on an older line does not take it over.
+            # The tag goes on the pull request's own commit (the approved head, now on main).
+            flags=(--target "$HEAD_SHA" --title "$tag" --notes-file "$RUNNER_TEMP/notes.md")
+            if [ "$pre" = "true" ]; then flags+=(--prerelease --latest=false); fi
+            gh release create "$tag" "${files[@]}" "${flags[@]}"
+            echo "Released $tag — $url" >> "$GITHUB_STEP_SUMMARY"
+          done < "$RUNNER_TEMP/versions.jsonl"
+          exit "$failed"
