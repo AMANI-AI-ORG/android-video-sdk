@@ -2,16 +2,19 @@ name: Open release PR
 
 # A maintainer listed in repository variable LOCAL_PUBLISHERS pushes a branch built on their machine
 # by /amani-manual-publish-pr (release/<version>) or /amani-backfill-versions (release/backfill-…).
-# This workflow opens its pull request to main AS THE PUBLISHING GITHUB APP, so the pull request's
-# author is the App and the maintainer can approve it. Nothing is merged or released here: the pull
-# request goes through "Verify publish PR" and publish-on-approval.yml like every release PR.
+# This workflow opens its pull request to main with this repository's GITHUB_TOKEN, so the pull
+# request's author is github-actions[bot] and the maintainer who pushed can approve it. No App, key or
+# secret is needed. Nothing is merged or released here: approving the pull request runs
+# publish-on-approval.yml, which re-runs "Verify publish PR" on the approved head before it merges.
 #
-# Pushes made by the App itself (the SDK repository's release workflow opens its own PR) are skipped.
+# GitHub starts no workflow for events caused by GITHUB_TOKEN, so "Verify publish PR" does not run
+# when this pull request is opened. It runs on approval (and blocks the merge if it fails), and on
+# any edit of the pull request description by a maintainer, e.g. when the release notes are written.
 #
-# The App key lives in the environment "release-bot" (secret PUBLIC_SDK_APP_PRIVATE_KEY, variable
-# PUBLIC_SDK_APP_ID). Restrict that environment's deployment branches to release/** and restrict who
-# may create/update release/** branches (ruleset) to the LOCAL_PUBLISHERS and the App — a push-run
-# workflow comes from the pushed branch, so whoever can push there can reach the environment's secret.
+# Requires the repository setting Actions > General > "Allow GitHub Actions to create and approve
+# pull requests". Pushes made by the SDK repository's publishing App (vars.PUBLISHER_BOT, which
+# opens its own PR) are skipped. Restrict who may create/update release/** branches (ruleset) to the
+# LOCAL_PUBLISHERS: a push-run workflow comes from the pushed branch.
 
 on:
   push:
@@ -19,7 +22,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
 
 concurrency:
   group: open-release-pr-${{ github.ref }}
@@ -29,7 +32,6 @@ jobs:
   open:
     if: github.event.deleted == false && github.actor != vars.PUBLISHER_BOT
     runs-on: ubuntu-latest
-    environment: release-bot
     steps:
       - name: Pusher and branch are allowed, no open PR yet
         id: check
@@ -101,27 +103,17 @@ jobs:
               cat .github/pull_request_template.md
             fi
             echo
-            echo "Branch pushed by \`${ACTOR}\`; pull request opened by the publishing App so a maintainer (also the one who pushed) can approve it."
+            echo "Branch pushed by \`${ACTOR}\`; pull request opened by github-actions[bot] so a maintainer (also the one who pushed) can approve it. \"Verify publish PR\" runs when it is approved (or when this description is edited)."
           } > "$RUNNER_TEMP/body.md"
 
-      - name: App token (this repository only)
-        id: app
-        if: steps.check.outputs.open == 'true'
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ vars.PUBLIC_SDK_APP_ID }}
-          private-key: ${{ secrets.PUBLIC_SDK_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-
-      - name: Open the pull request as the App
+      - name: Open the pull request (GITHUB_TOKEN, author github-actions[bot])
         if: steps.check.outputs.open == 'true'
         env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
           TITLE: ${{ steps.text.outputs.title }}
         run: |
           set -euo pipefail
           url="$(gh pr create -R "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/body.md")"
           echo "Opened $url" >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice::Opened $url — approve it when \"Verify publish PR\" is green."
+          echo "::notice::Opened $url — approving it runs \"Verify publish PR\" and then publishes."

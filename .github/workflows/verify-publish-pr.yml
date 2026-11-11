@@ -5,10 +5,9 @@ name: Verify publish PR
 # their checksum files, SHA256SUMS, RELEASE_NOTES.md and release.json, all consistent with the bytes;
 # its tag must not exist yet; the branch must say what the pull request is (release/<version>: exactly
 # that one new version; release/backfill-…: only backfilled versions); and the pull request must come
-# from this repository, opened by the publishing GitHub App (repository variable PUBLISHER_BOT, e.g.
-# amani-sdk-publisher[bot]) — by the SDK repository's release workflow, or by open-release-pr.yml for
-# a branch a maintainer listed in LOCAL_PUBLISHERS pushed — with every commit by the App or by such a
-# maintainer. A pull request opened by a listed maintainer themself (older flow) is still accepted
+# from this repository, opened by github-actions[bot] (open-release-pr.yml, for a branch a maintainer
+# listed in LOCAL_PUBLISHERS pushed) or by the SDK repository's publishing App (repository variable
+# PUBLISHER_BOT, optional) — with every commit by that bot or by such a maintainer. A pull request opened by a listed maintainer themself (older flow) is still accepted
 # when every commit is theirs; they then cannot approve it.
 #
 # pull_request_target on purpose: the workflow and scripts/maven_site.py run from main, so a pull
@@ -91,9 +90,10 @@ jobs:
           echo "Added version folders:"; cat "$RUNNER_TEMP/dirs.txt" || true
 
       # Allowed publishers:
-      #   - PUBLISHER_BOT: the GitHub App. It opens the PR for the SDK repository's release workflow
-      #     (its own commits) and, through open-release-pr.yml, for a branch a maintainer pushed (that
-      #     maintainer's commits).
+      #   - github-actions[bot]: open-release-pr.yml opens the PR (GITHUB_TOKEN) for a branch a
+      #     maintainer pushed (that maintainer's commits).
+      #   - PUBLISHER_BOT (optional): the SDK repository's publishing App, which opens its own PR with
+      #     its own commits.
       #   - LOCAL_PUBLISHERS: SDK maintainers' GitHub logins (space or comma separated) whose commits
       #     (/amani-manual-publish-pr, /amani-backfill-versions) may be published. Empty = App only.
       # Every commit must be authored AND committed by the same allowed login (GitHub resolves the
@@ -109,23 +109,19 @@ jobs:
         run: |
           set -euo pipefail
           [ -s "$RUNNER_TEMP/dirs.txt" ] || exit 0
-          if [ -z "$PUBLISHER_BOT" ]; then
-            echo "::error::Repository variable PUBLISHER_BOT is not set (the publishing App's bot login, e.g. amani-sdk-publisher[bot])."
-            exit 1
-          fi
           if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
             echo "::error::Version folders may only come from a branch of this repository (this pull request is from ${HEAD_REPO:-a fork})."
             exit 1
           fi
           IFS=', ' read -r -a logins <<< "$LOCAL_PUBLISHERS"
           listed() { local l; for l in "${logins[@]:-}"; do [ -n "$l" ] && [ "$l" = "$1" ] && return 0; done; return 1; }
-          if [ "$AUTHOR" = "$PUBLISHER_BOT" ]; then
-            allowed=("$PUBLISHER_BOT" "${logins[@]:-}")
+          if [ "$AUTHOR" = "github-actions[bot]" ] || { [ -n "$PUBLISHER_BOT" ] && [ "$AUTHOR" = "$PUBLISHER_BOT" ]; }; then
+            allowed=("$AUTHOR" "${logins[@]:-}")
           elif listed "$AUTHOR"; then
             echo "::notice::Pull request opened by maintainer $AUTHOR (listed in LOCAL_PUBLISHERS) — they cannot approve it themselves."
             allowed=("$AUTHOR")
           else
-            echo "::error::Version folders under maven/ may only be added by $PUBLISHER_BOT or a login in LOCAL_PUBLISHERS (this pull request is from $AUTHOR). Publish through the release workflow in the SDK repository."
+            echo "::error::Version folders under maven/ may only be added by github-actions[bot]${PUBLISHER_BOT:+, $PUBLISHER_BOT} or a login in LOCAL_PUBLISHERS (this pull request is from $AUTHOR). Publish through the release workflow in the SDK repository."
             exit 1
           fi
           # Every commit, not just the PR author: a commit pushed on top of the branch by anyone

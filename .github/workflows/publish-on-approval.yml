@@ -1,7 +1,7 @@
 name: Publish approved release PR
 
-# Release pull requests (branch release/<version> or release/backfill-…, opened by the publishing
-# GitHub App) are merged by this workflow when a maintainer approves them — never by hand:
+# Release pull requests (branch release/<version> or release/backfill-…, opened by github-actions[bot]
+# or the SDK repository's publishing App) are merged by this workflow when a maintainer approves them — never by hand:
 #   1. verify  — the same checks as "Verify publish PR" (reusable workflow), on the approved head;
 #   2. merge   — the approval must be by a maintainer with write access, for the PR's latest commit,
 #                and by someone other than the PR author; the PR must only add files under maven/ and

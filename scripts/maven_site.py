@@ -10,7 +10,8 @@ The repository keeps one folder per published version under maven/, e.g.
         <artifactId>-<version>.module  (+ checksums; only modules that publish Gradle Module Metadata)
         SHA256SUMS          sha256sum output for every artifact above
         RELEASE_NOTES.md    GitHub Release body
-        release.json        {"groupId", "artifactId", "version", "tag", "prerelease", ...}
+        release.json        {"groupId", "artifactId", "version", "tag", "prerelease", "createdAt"}
+                            (+ "backfilled", "sourceTag"; no other key is accepted, see RELEASE_KEYS)
 
 Files are served straight from the repository (raw.githubusercontent.com), so the per-artifact
 maven-metadata.xml (+ .sha1 .sha256) is committed too: a release pull request adds the version folder
@@ -56,6 +57,16 @@ def write_checksums(path):
 def version_dirs(maven_dir):
     """Every folder that holds a release.json, sorted for stable output."""
     return sorted(p.parent for p in Path(maven_dir).rglob("release.json"))
+
+
+# release.json is public. Only these keys may appear in it: build internals (source commits,
+# obfuscation/R8 statistics, version-constant corrections, local paths) stay in the maintainer's
+# logs and never reach the public repository.
+RELEASE_KEYS = {"groupId", "artifactId", "version", "tag", "prerelease", "backfilled", "sourceTag",
+                "createdAt"}
+# RELEASE_NOTES.md is public too; these terms point at build internals and are rejected.
+FORBIDDEN_NOTES = re.compile(r"obfuscat|renamedClasses|totalClasses|minifyEnabled|mapping\.txt|"
+                             r"sourceCommit|appConstants|/Users/|/home/|C:\\", re.I)
 
 
 # Tag of a version in its public repository: artifactId → prefix + version.
@@ -106,6 +117,15 @@ def verify_dir(vdir):
     for key in ("prerelease", "backfilled"):
         if key in rel and not isinstance(rel[key], bool):
             problems.append(f"{vdir}: release.json '{key}' must be true or false")
+    for key in sorted(set(rel) - RELEASE_KEYS):
+        problems.append(f"{vdir}: release.json must not contain '{key}' (public file; allowed: "
+                        f"{', '.join(sorted(RELEASE_KEYS))})")
+    notes = vdir / "RELEASE_NOTES.md"
+    if notes.is_file():
+        hit = FORBIDDEN_NOTES.search(notes.read_text(errors="replace"))
+        if hit:
+            problems.append(f"{vdir}: RELEASE_NOTES.md mentions '{hit.group(0)}' (build internals "
+                            f"must not be published)")
     if not problems:
         expected_tag = TAG_PREFIX.get(rel["artifactId"], "v") + rel["version"]
         if rel["tag"] != expected_tag:
