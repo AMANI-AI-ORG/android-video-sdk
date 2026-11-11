@@ -1,0 +1,145 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "ai.amani.android",
+    "module": "amanivideosdk",
+    "version": "1.8.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.0"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.databinding",
+          "module": "viewbinding",
+          "version": {
+            "requires": "7.4.2"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib-jdk8",
+          "version": {
+            "requires": "1.8.20"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "amanivideosdk-1.8.0.aar",
+          "url": "amanivideosdk-1.8.0.aar",
+          "size": 173130,
+          "sha512": "ba231ade4e2ae37af4fb542f93915ac6f673881a6a858e1c7e8d9c67a32233a19195858f5a8ce2ee2d539f984f57a1b45368531083edd2f9f432196d53887838",
+          "sha256": "e5a375f4ab2217bcde25c9480844d8c80f7e276740e1b7527ceda28e2004165c",
+          "sha1": "5224d61cde0d42e97d76a565e99f2dbee6da35eb",
+          "md5": "131fd268f3457b0da3b9be1808969d4b"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-parcelize-runtime",
+          "version": {
+            "requires": "1.8.20"
+          }
+        },
+        {
+          "group": "androidx.core",
+          "module": "core-ktx",
+          "version": {
+            "requires": "1.12.0"
+          }
+        },
+        {
+          "group": "androidx.appcompat",
+          "module": "appcompat",
+          "version": {
+            "requires": "1.6.1"
+          }
+        },
+        {
+          "group": "com.google.android.material",
+          "module": "material",
+          "version": {
+            "requires": "1.11.0"
+          }
+        },
+        {
+          "group": "pub.devrel",
+          "module": "easypermissions",
+          "version": {
+            "requires": "3.0.0"
+          }
+        },
+        {
+          "group": "io.socket",
+          "module": "socket.io-client",
+          "version": {
+            "requires": "2.1.2"
+          },
+          "excludes": [
+            {
+              "group": "org.json",
+              "module": "json"
+            }
+          ]
+        },
+        {
+          "group": "io.github.webrtc-sdk",
+          "module": "android",
+          "version": {
+            "requires": "137.7151.05"
+          }
+        },
+        {
+          "group": "androidx.databinding",
+          "module": "viewbinding",
+          "version": {
+            "requires": "7.4.2"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib-jdk8",
+          "version": {
+            "requires": "1.8.20"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "amanivideosdk-1.8.0.aar",
+          "url": "amanivideosdk-1.8.0.aar",
+          "size": 173130,
+          "sha512": "ba231ade4e2ae37af4fb542f93915ac6f673881a6a858e1c7e8d9c67a32233a19195858f5a8ce2ee2d539f984f57a1b45368531083edd2f9f432196d53887838",
+          "sha256": "e5a375f4ab2217bcde25c9480844d8c80f7e276740e1b7527ceda28e2004165c",
+          "sha1": "5224d61cde0d42e97d76a565e99f2dbee6da35eb",
+          "md5": "131fd268f3457b0da3b9be1808969d4b"
+        }
+      ]
+    }
+  ]
+}
